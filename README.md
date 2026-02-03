@@ -19,7 +19,7 @@
 如果您安装了 Docker，这是最简单的运行方式。
 
 1.  **启动服务**：
-    双击运行目录下的 `start.bat`，或者在终端执行：
+    在终端执行：
     ```bash
     docker compose up -d
     ```

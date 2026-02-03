@@ -1,0 +1,8 @@
+librosa
+moviepy<2.0
+numpy
+opencv-python-headless
+soundfile
+fastapi
+uvicorn
+python-multipart

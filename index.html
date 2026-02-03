@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>屏光测试播放器</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #000;
+            font-family: sans-serif;
+            color: white;
+            overflow: hidden;
+        }
+
+        #visual-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+            display: flex; /* Default flex for most layouts */
+            transition: background-color 0.2s ease;
+        }
+
+        /* Layout Classes */
+        .layout-row { flex-direction: row; }
+        .layout-col { flex-direction: column; }
+        .layout-grid { 
+            display: grid !important; 
+            grid-template-columns: repeat(3, 1fr); 
+            grid-template-rows: repeat(2, 1fr);
+        }
+
+        .block {
+            flex: 1;
+            width: 100%;
+            height: 100%;
+            transition: background-color 0.2s ease;
+        }
+
+        /* Diagonal Layout */
+        .diagonal-container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+        }
+        .diagonal-a {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            clip-path: polygon(0 0, 100% 0, 0 100%);
+            z-index: 2;
+            transition: background-color 0.2s ease;
+        }
+        .diagonal-b {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            clip-path: polygon(100% 0, 100% 100%, 0 100%);
+            z-index: 1;
+            transition: background-color 0.2s ease;
+        }
+
+        #controls {
+            position: absolute; /* Changed back to absolute to overlay on visual container */
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 999;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 40px;
+            border-radius: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+            box-shadow: 0 0 20px rgba(0,0,0,0.8);
+            backdrop-filter: blur(5px);
+        }
+
+        button {
+            background: #fff;
+            color: #000;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 50px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 18px;
+            transition: transform 0.1s;
+        }
+
+        button:active {
+            transform: scale(0.95);
+        }
+
+        button:hover {
+            background: #f0f0f0;
+        }
+        
+        select {
+            background: rgba(255, 255, 255, 0.9);
+            color: #000;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 16px;
+            min-width: 200px;
+            text-align: center;
+            cursor: pointer;
+        }
+        
+        #status {
+            font-size: 14px;
+            color: #aaa;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="visual-container"></div>
+
+    <div id="controls">
+        <div style="display: flex; gap: 5px; align-items: center; margin-bottom: 10px;">
+            <select id="song-select">
+                <option value="">加载歌曲中...</option>
+            </select>
+            <button id="refresh-btn" style="padding: 8px 12px; font-size: 14px; min-width: auto;">刷新</button>
+        </div>
+        
+        <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 10px;">
+            <label for="sensitivity">灵敏度 (最小间隔)):</label>
+            <input type="number" id="sensitivity" value="0.1" step="0.01" min="0.01" max="1.0" style="width: 60px;">
+        </div>
+
+        <div style="display: flex; gap: 10px;">
+            <button id="play-btn">播放</button>
+            <button id="regenerate-btn" style="background-color: #e67e22;">更新节奏</button>
+        </div>
+        
+        <span id="status">加载中...</span>
+    </div>
+
+    <audio id="audio-player"></audio>
+
+    <script>
+        let playlist = null;
+        let currentRhythmData = null;
+        let currentBeatIndex = 0;
+        let isPlaying = false;
+        let currentPattern = null;
+        
+        const audioPlayer = document.getElementById('audio-player');
+        const playBtn = document.getElementById('play-btn');
+        const regenerateBtn = document.getElementById('regenerate-btn');
+        const sensitivityInput = document.getElementById('sensitivity');
+        const refreshBtn = document.getElementById('refresh-btn');
+        const songSelect = document.getElementById('song-select');
+        const statusSpan = document.getElementById('status');
+        const visualContainer = document.getElementById('visual-container');
+
+        // 1. Load Playlist
+        function fetchPlaylist() {
+            statusSpan.textContent = "正在刷新列表...";
+            fetch('playlist.json')
+                .then(response => response.json())
+                .then(data => {
+                    playlist = data;
+                    initPlaylist();
+                })
+                .catch(error => {
+                    console.error("Error loading playlist:", error);
+                    statusSpan.textContent = "加载播放列表失败";
+                });
+        }
+
+        // Initial load
+        fetchPlaylist();
+        
+        // Bind refresh button
+        refreshBtn.addEventListener('click', fetchPlaylist);
+
+        function initPlaylist() {
+            if (!playlist || !playlist.songs.length) {
+                statusSpan.textContent = "未找到歌曲";
+                songSelect.innerHTML = '<option value="">(空)</option>';
+                return;
+            }
+
+            // Populate Dropdown
+            songSelect.innerHTML = '';
+            playlist.songs.forEach((song, index) => {
+                const option = document.createElement('option');
+                option.value = index;
+                option.textContent = song.name;
+                songSelect.appendChild(option);
+            });
+
+            // Load first song
+            loadSong(0);
+
+            // Listen for changes
+            songSelect.addEventListener('change', (e) => {
+                loadSong(e.target.value);
+            });
+            
+            statusSpan.textContent = "就绪";
+        }
+
+        async function loadSong(index, autoPlay = false) {
+            // Stop current playback
+            if (isPlaying) {
+                audioPlayer.pause();
+                playBtn.textContent = "播放";
+                isPlaying = false;
+            }
+            
+            const songInfo = playlist.songs[index];
+            statusSpan.textContent = `正在加载 ${songInfo.name}...`;
+            
+            try {
+                // Add timestamp to prevent caching
+                // Note: songInfo.data_src is inferred in server.py, it might point to a non-existent json
+                // We handle 404/error below
+                const response = await fetch(`${songInfo.data_src}?t=${Date.now()}`);
+                
+                if (!response.ok) {
+                    throw new Error(`Status ${response.status}`);
+                }
+                
+                const songData = await response.json();
+                
+                currentRhythmData = songData;
+                audioPlayer.src = songData.audio_src;
+                currentBeatIndex = 0;
+                statusSpan.textContent = `加载完成: ${songInfo.name} (${songData.bpm.toFixed(0)} BPM)`;
+
+                if (autoPlay) {
+                    audioPlayer.oncanplay = () => {
+                       togglePlay();
+                       audioPlayer.oncanplay = null;
+                    };
+                }
+
+            } catch (err) {
+                console.warn("Song data not found or invalid, waiting for generation:", err);
+                // Even if json not found, we can still set audio src if we know it?
+                // But currentRhythmData is needed for visuals.
+                currentRhythmData = null;
+                
+                // If we have audio_file, we can at least play the audio without visuals?
+                // But the system relies on beats. 
+                // Let's just set status to indicate need for generation.
+                statusSpan.textContent = "未找到节奏数据，请点击“更新节奏”生成";
+                
+                // We can't play without audio_src which comes from json usually.
+                // But wait, server.py now provides audio_file.
+                // We could set audioPlayer.src = 'music/' + songInfo.audio_file;
+                if (songInfo.audio_file) {
+                    audioPlayer.src = 'music/' + songInfo.audio_file;
+                }
+            }
+        }
+
+        function togglePlay() {
+            if (audioPlayer.paused) {
+                audioPlayer.play().then(() => {
+                    playBtn.textContent = "暂停";
+                    isPlaying = true;
+                    requestAnimationFrame(checkRhythm);
+                }).catch(e => console.error(e));
+            } else {
+                audioPlayer.pause();
+                playBtn.textContent = "播放";
+                isPlaying = false;
+            }
+        }
+
+        playBtn.addEventListener('click', togglePlay);
+        
+        regenerateBtn.addEventListener('click', async () => {
+            const index = songSelect.value;
+            if (index === "") {
+                alert("请先选择一首歌曲");
+                return;
+            }
+            
+            const songInfo = playlist.songs[index];
+            
+            let filename;
+            if (currentRhythmData) {
+                 filename = currentRhythmData.audio_src.split('/').pop();
+            } else if (songInfo.audio_file) {
+                 filename = songInfo.audio_file;
+            } else {
+                 alert("无法获取音频文件名");
+                 return;
+            }
+
+            const sensitivity = parseFloat(sensitivityInput.value);
+
+            statusSpan.textContent = "正在更新节奏...";
+            regenerateBtn.disabled = true;
+
+            try {
+                const response = await fetch('/api/generate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        filename: filename,
+                        min_beat_duration: sensitivity
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Server error: ${response.status}`);
+                }
+
+                const result = await response.json();
+                statusSpan.textContent = "更新完成"; 
+                
+                // Reload the song data and play
+                loadSong(index, true); 
+
+            } catch (error) {
+                console.error("Error generating rhythm:", error);
+                statusSpan.textContent = "错误: " + error.message;
+            } finally {
+                regenerateBtn.disabled = false;
+            }
+        });
+        
+        // Sync logic
+        function checkRhythm() {
+            if (!isPlaying || !currentRhythmData) return;
+
+            const currentTime = audioPlayer.currentTime;
+            const beats = currentRhythmData.beats;
+
+            // Reset index if we scrubbed back
+            if (currentBeatIndex > 0 && currentTime < beats[currentBeatIndex]) {
+                currentBeatIndex = 0;
+            }
+
+            // Fast forward index to current time
+            while (currentBeatIndex < beats.length - 1 && currentTime >= beats[currentBeatIndex + 1]) {
+                currentBeatIndex++;
+                changeVisual(); // Beat happened!
+            }
+
+            if (!audioPlayer.paused) {
+                requestAnimationFrame(checkRhythm);
+            } else {
+                isPlaying = false;
+                playBtn.textContent = "播放";
+            }
+        }
+
+        function getRandomColor() {
+            const rand = Math.random();
+            // 20% chance to be black
+            if (rand < 0.2) {
+                return '#000000';
+            }
+            // 20% chance to be white
+            if (rand < 0.4) {
+                return '#ffffff';
+            }
+            const h = Math.floor(Math.random() * 360);
+            const s = Math.floor(Math.random() * 30) + 70;
+            const l = Math.floor(Math.random() * 20) + 40;
+            return `hsl(${h}, ${s}%, ${l}%)`;
+        }
+
+        function changeVisual() {
+            // Available patterns
+            const patterns = [
+                'full', 
+                'half-h', 'half-v', 
+                'third-h', 'third-v', 
+                'grid-6', 
+                'diagonal'
+            ];
+            
+            // Pick a random pattern
+            // Weight 'full' higher so it appears more often as a base
+            let pattern = patterns[Math.floor(Math.random() * patterns.length)];
+            
+            // Optimization: Reuse DOM if pattern is same for smooth transition
+            if (pattern === currentPattern) {
+                if (pattern === 'full') {
+                     visualContainer.style.backgroundColor = getRandomColor();
+                     return;
+                }
+                // For blocks/diagonals, just update colors
+                const blocks = visualContainer.querySelectorAll('.block, .diagonal-a, .diagonal-b');
+                if (blocks.length > 0) {
+                    blocks.forEach(el => el.style.backgroundColor = getRandomColor());
+                    return;
+                }
+                // If for some reason no blocks found, fall through to rebuild
+            }
+
+            currentPattern = pattern;
+
+            // Clear container
+            visualContainer.innerHTML = '';
+            visualContainer.className = ''; // Reset classes
+            visualContainer.style.backgroundColor = 'transparent'; // Reset container bg
+
+            switch(pattern) {
+                case 'full':
+                    visualContainer.style.backgroundColor = getRandomColor();
+                    break;
+
+                case 'half-h': // Horizontal split (Top/Bottom)
+                    visualContainer.className = 'layout-col';
+                    createBlocks(2);
+                    break;
+                
+                case 'half-v': // Vertical split (Left/Right)
+                    visualContainer.className = 'layout-row';
+                    createBlocks(2);
+                    break;
+
+                case 'third-h': // 3 Rows
+                    visualContainer.className = 'layout-col';
+                    createBlocks(3);
+                    break;
+
+                case 'third-v': // 3 Columns
+                    visualContainer.className = 'layout-row';
+                    createBlocks(3);
+                    break;
+
+                case 'grid-6': // 6 Blocks Grid
+                    visualContainer.className = 'layout-grid';
+                    createBlocks(6);
+                    break;
+
+                case 'diagonal':
+                    createDiagonal();
+                    break;
+            }
+        }
+
+        function createBlocks(count) {
+            visualContainer.style.backgroundColor = 'transparent';
+            for (let i = 0; i < count; i++) {
+                const div = document.createElement('div');
+                div.className = 'block';
+                div.style.backgroundColor = getRandomColor();
+                visualContainer.appendChild(div);
+            }
+        }
+
+        function createDiagonal() {
+            visualContainer.style.backgroundColor = 'transparent';
+            
+            const container = document.createElement('div');
+            container.className = 'diagonal-container';
+            
+            const divA = document.createElement('div');
+            divA.className = 'diagonal-a';
+            divA.style.backgroundColor = getRandomColor();
+            
+            const divB = document.createElement('div');
+            divB.className = 'diagonal-b';
+            divB.style.backgroundColor = getRandomColor();
+            
+            container.appendChild(divA);
+            container.appendChild(divB);
+            visualContainer.appendChild(container);
+        }
+
+    </script>
+</body>
+</html>
